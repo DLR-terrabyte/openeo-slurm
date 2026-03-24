@@ -8,18 +8,13 @@ import requests
 import tarfile
 import time
 import uuid
+import jwt
 
-from hera.exceptions import NotFound
-from hera.workflows import WorkflowsService
-from hera.workflows.models import WorkflowStopRequest
-from hera.exceptions import NotFound
 from fastapi import Depends, Response, HTTPException, responses
 from typing import Optional
 from pathlib import Path
 from pydantic import conint, BaseModel
 from pystac import Collection, Link as StacLink
-from redis import Redis
-from rq import Queue
 from sqlalchemy.exc import IntegrityError
 from typing import Union
 from urllib.parse import urljoin
@@ -32,7 +27,7 @@ from openeo_fastapi.client.auth import Authenticator, User
 
 from openeo_argoworkflows_api.auth import ExtendedAuthenticator
 from openeo_argoworkflows_api.psql.models import ArgoJob
-from openeo_argoworkflows_api.tasks import queue_to_submit, submit_job
+from openeo_argoworkflows_api.tasks import submit_job
 
 
 fs = fsspec.filesystem(protocol="file")
@@ -84,16 +79,6 @@ class ArgoJobsRegister(JobsRegister):
 
     def __init__(self, settings, links) -> None:
         super().__init__(settings, links)
-
-        self.workflows_service = WorkflowsService(
-            host=settings.ARGO_WORKFLOWS_SERVER, verify_ssl=False, namespace=settings.ARGO_WORKFLOWS_NAMESPACE, token=settings.ARGO_WORKFLOWS_TOKEN.get_secret_value()
-        )
-
-        self.q = Queue(
-            connection=Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT
-        ))
 
     def create_job(
         self, body: JobsRequest, user: User = Depends(Authenticator.validate)
@@ -173,11 +158,12 @@ class ArgoJobsRegister(JobsRegister):
                 status_code=500, detail=f"Could not create workspace for the current job."
             )
 
+        # Submit job to SLURM
+        slurm_job = submit_job(user._access_token, job.process.process_graph)
+
+        job.workflowname = slurm_job['job_id']
         job.status = "queued"
         queued = engine.modify(modify_object=job)
-
-        # TODO Enqueue call to submit queued job
-        queue_to_submit(job)
 
         if queued:
             return Response(
@@ -209,17 +195,8 @@ class ArgoJobsRegister(JobsRegister):
                 detail="The job isn't running or queued and therefore could not be canceled",
             )
         
-        req = WorkflowStopRequest(
-            name=job.workflowname,
-            namespace=self.settings.ARGO_WORKFLOWS_NAMESPACE,
-        )
-
         try:
-            self.workflows_service.stop_workflow(
-                name = job.workflowname,
-                req=req,
-                namespace=req.namespace
-            )
+            pass
         except NotFound:
             logger.warning(f"Could not stop workflow {job.workflowname} for job {job.job_id}.")
         
@@ -244,10 +221,7 @@ class ArgoJobsRegister(JobsRegister):
             raise HTTPException(404, "No Job run found for this Job.")
        
         try:
-            workflow = self.workflows_service.get_workflow(
-                name=job.workflowname,
-                namespace=self.settings.ARGO_WORKFLOWS_NAMESPACE\
-            )
+            pass
         except NotFound as exc:
             raise HTTPException(404, "Job run not longer available for this Job.")
 
@@ -402,9 +376,11 @@ class ArgoJobsRegister(JobsRegister):
         )
 
         engine.create(create_object=job)
+        slurm_job = submit_job(user._access_token, job.process.process_graph)
 
-        self.q.enqueue(submit_job, job)
-
+        job.workflowname = slurm_job['job_id']
+        job.status = "queued"
+        queued = engine.modify(modify_object=job)
         job_finished = False
 
         # Needs to wait for completion

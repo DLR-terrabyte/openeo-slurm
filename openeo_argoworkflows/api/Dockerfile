@@ -19,6 +19,7 @@ RUN python3 -m venv ENV_DIR $VIRTUAL_ENV && \
 
 ENV PATH="${POETRY_HOME}/bin:${VIRTUAL_ENV}/bin:${PATH}"
 
+RUN poetry lock
 RUN poetry install --only main
 
 COPY --chown=${USER_ID}:${GROUP_ID} ./openeo_argoworkflows_api /opt/openeo_argoworkflows_api

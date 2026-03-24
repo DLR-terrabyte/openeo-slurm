@@ -1,107 +1,81 @@
+import os
+import jwt
+import json
+import requests
 from datetime import timedelta
-from hera.workflows import  WorkflowsService
 from openeo_fastapi.api.types import Status
-from redis import Redis
-from rq import Queue
 from typing import Any
 
 from openeo_fastapi.client.psql.engine import modify
 from openeo_argoworkflows_api.psql.models import ArgoJob
-from openeo_argoworkflows_api.workflows import executor_workflow
 from openeo_argoworkflows_api.settings import ExtendedAppSettings
 
 settings = ExtendedAppSettings()
-q = Queue(
-    connection=Redis(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT
-))
 
-def queue_to_submit(job: ArgoJob):
-    """  Function to see if there is space in the pool for another Job. """
-    argo = WorkflowsService(
-        host=settings.ARGO_WORKFLOWS_SERVER,
-        verify_ssl=False,
-        namespace=settings.ARGO_WORKFLOWS_NAMESPACE,
-        token=settings.ARGO_WORKFLOWS_TOKEN.get_secret_value(),
+def get_service_token(client_id, client_secret):
+    token_response2 = requests.post(
+      os.getenv('OIDC_URL') + "protocol/openid-connect/token",
+      headers={"Content-Type": "application/x-www-form-urlencoded"},
+      data={
+        "client_id": os.getenv('CLIENT_ID'),
+        "client_secret": os.getenv('CLIENT_SECRET'),
+        "grant_type": "client_credentials",
+        "scope": "slurmrest",
+     },
     )
-
-    workflows = argo.list_workflows().items
-
-    if not workflows:
-        return q.enqueue(submit_job, job)
-
-    check_statuses = ("Running", "Pending")
-    filtered_workflows = [
-        workflow
-        for workflow in workflows
-        if workflow.status.phase in check_statuses
-    ]
-
-    if len(filtered_workflows) >= settings.ARGO_WORKFLOWS_LIMIT:
-        return q.enqueue_in(timedelta(minutes=5), queue_to_submit, job)
-    else:
-        return q.enqueue(submit_job, job)
+    token_response2.raise_for_status()
+    token_data2 = token_response2.json()
+    token = token_data2["access_token"]
+    return token
 
 
-def submit_job(job: ArgoJob):
-    """ Submit the job to argo. """
-    argo = WorkflowsService(
-        host=settings.ARGO_WORKFLOWS_SERVER,
-        verify_ssl=False,
-        namespace=settings.ARGO_WORKFLOWS_NAMESPACE,
-        token=settings.ARGO_WORKFLOWS_TOKEN.get_secret_value(),
-    )    
-
-    if settings.DASK_GATEWAY_SERVER and settings.OPENEO_EXECUTOR_IMAGE:
-        dask_profile = {
-            "GATEWAY_URL": settings.DASK_GATEWAY_SERVER,
-            "OPENEO_EXECUTOR_IMAGE": settings.OPENEO_EXECUTOR_IMAGE,
-            "WORKER_CORES": settings.DASK_WORKER_CORES,
-            "WORKER_MEMORY": settings.DASK_WORKER_MEMORY,
-            "WORKER_LIMIT": settings.DASK_WORKER_LIMIT,
-            "CLUSTER_IDLE_TIMEOUT": settings.DASK_CLUSTER_IDLE_TIMEOUT
+def get_slurm_payload(process_graph, username):
+    if not os.path.exists('/config/sbatch_template.sh'):
+        raise HTTPException(
+            status_code=500, detail=f"Could not find sbatch template file."
+        )
+    slurm_content = open('/config/sbatch_template.sh').read()
+    slurm_content = slurm_content.replace('$PROCESS_GRAPH', process_graph)
+    slurm_content = slurm_content.replace('$USER', username)
+    payload = {
+      "job": {
+        "name": "openeo",
+        "partition": os.getenv('SLURM_PARTITION_DEFAULT'),
+        "standard_output": os.getenv('SLURM_JOB_STDOUT'),
+        "standard_error": os.getenv('SLURM_JOB_STDERR'),
+        "environment": {
+          "PATH": os.getenv('SLURM_JOB_PATH'),
+          "LD_LIBRARY_PATH": os.getenv('SLURM_JOB_LD_PATH')
         }
-    else:
-        dask_profile = {
-            "LOCAL": True
-        }
-
-    user_profile = {
-        "OPENEO_JOB_ID": str(job.job_id),
-        "OPENEO_USER_ID": str(job.user_id),
-        "OPENEO_USER_WORKSPACE": str(settings.OPENEO_WORKSPACE_ROOT / str(job.user_id) / str(job.job_id))
+      },
+      "script": slurm_content
     }
-    workflow = executor_workflow(argo, job.process.process_graph, dask_profile, user_profile)
-
-    response = workflow.create()
-
-    job.status = Status.running
-    job.workflowname = response.metadata.name
-    modify(job)
-
-    return q.enqueue(poll_job_status, job, response.metadata)
+    return payload
 
 
-def poll_job_status(job: ArgoJob, metadata: Any):
-    """ Submit the job to argo. """
-    argo = WorkflowsService(
-        host=settings.ARGO_WORKFLOWS_SERVER,
-        verify_ssl=False,
-        namespace=settings.ARGO_WORKFLOWS_NAMESPACE,
-        token=settings.ARGO_WORKFLOWS_TOKEN.get_secret_value(),
-    )
+def submit_job(access_token, process_graph):
+    client_id = os.getenv('CLIENT_ID')
+    client_secret = os.getenv('CLIENT_SECRET')
+    username = jwt.decode(access_token, options={"verify_signature": False})['preferred_username']
+    payload = get_slurm_payload(json.dumps(process_graph), username)
+    headers = {"Authorization": f"Bearer {access_token},{get_service_token(client_id, client_secret)}"}
+    response = requests.post(os.getenv('SLURM_REST_API') + "/job/submit", json=payload, headers=headers)
+    slurm_job = response.json()
+    return slurm_job
 
-    workflow = argo.get_workflow(
-        name=metadata.name,
-        namespace=metadata.namespace
-    )
 
-    if workflow.status.phase == "Succeeded":
-        job.status = Status.finished
-        modify(job)
-    elif workflow.status.phase in ("Failed", "Error"):
-        job.status = Status.error
-        modify(job)
-    elif workflow.status.phase in ("Running", "Pending"):
-        return q.enqueue(poll_job_status, job, metadata)
+def get_job_status(job_id):
+    client_id = os.getenv('CLIENT_ID_STATUS')
+    client_secret = os.getenv('CLIENT_SECRET_STATUS')
+    headers = {"Authorization": f"Bearer {get_service_token(client_id, client_secret)}"}
+    response = requests.get(os.getenv('SLURM_REST_API') + "/job/%s" % job_id, headers=headers)
+    info = response.json()
+    job_status = info['jobs'][0]['job_state']
+    if job_status in ["COMPLETED"]: 
+       return Status.finished
+    elif job_status in ["FAILED", "SUSPENDED", "PREEMPTED"]: 
+       return Status.error
+    elif job_status == "RUNNING":
+       return Status.running
+    else:
+       return Status.queued
