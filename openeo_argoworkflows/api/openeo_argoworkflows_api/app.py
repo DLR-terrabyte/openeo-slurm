@@ -1,11 +1,12 @@
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
 from openeo_fastapi.api.app import OpenEOApi
 from openeo_fastapi.api.types import Billing, Plan, FileFormat, GisDataType
 from openeo_fastapi.client.core import OpenEOCore
+from openeo_fastapi.client.auth import Authenticator, AuthToken
 
 from openeo_argoworkflows_api.jobs import ArgoJobsRegister
 from openeo_argoworkflows_api.files import ArgoFileRegister
@@ -57,6 +58,14 @@ app.router.add_api_route(
 )
 
 api = OpenEOApi(client=client, app=app)
+
+def validate_auth(authorization: str = Header()):
+    user = Authenticator.validate(authorization)
+    parsed_token = AuthToken.from_token(authorization)
+    user._access_token = parsed_token.token
+    return user
+
+api.override_authentication(validate_auth)
 
 api.app.add_middleware(
     CORSMiddleware,
