@@ -3,7 +3,6 @@ import numpy as np
 import os
 import pyproj
 import pystac_client
-import rioxarray
 import xarray as xr
 
 from odc.stac import stac_load
@@ -26,6 +25,7 @@ def load_collection(
     properties: Optional[dict] = None,
     **kwargs,
 ):
+    logging.info("load_collection")
     query_dict = {}
 
     query_dict["collections"] = [id]
@@ -50,16 +50,18 @@ def load_collection(
         raise ValueError("Provided spatial extent could not be interpreted.")
 
     query_dict["datetime"] = tuple(
-        [time.root.isoformat() for time in temporal_extent if time != 'None']
+        [str(time.root) for time in temporal_extent if time != 'None']
     )
 
     if "STAC_API_URL" not in os.environ:
         raise Exception("STAC URL Not available in executor config.")
 
+    logging.info("STAC_API_URL: " + os.environ["STAC_API_URL"])
     catalog = pystac_client.Client.open(os.environ["STAC_API_URL"])
     results = catalog.search(**query_dict, limit=10)
 
     result_items = list(results.items())
+    logging.info("found %s items" % len(result_items))
 
     example_item = result_items[0]
 
@@ -108,8 +110,7 @@ def load_collection(
         chunks={"x": 2048, "y": 2048},
         **kwargs
     ).to_array(dim='bands')
-
-    lazy_xarray.rio.write_crs(crs)
+    logging.info(lazy_xarray)
 
     # Add some sort of clipping here to the original bounding box that was requested.
     return filter_bbox(lazy_xarray, extent=spatial_extent)
@@ -137,8 +138,8 @@ def save_result(
 
     import uuid
 
-    logging.info("DATA ", data)
-    logging.info("DATA ATTRS ", data.attrs)
+    #logging.info("DATA ", data)
+    #logging.info("DATA ATTRS ", data.attrs)
 
     _id = str(uuid.uuid4())
     # TODO A nice abstraction to split the xarray into the respective output datasets

@@ -2,7 +2,10 @@ import click
 import fsspec
 import logging
 
+logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
+
 
 @click.group()
 def cli():

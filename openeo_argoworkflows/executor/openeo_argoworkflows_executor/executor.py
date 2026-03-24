@@ -78,14 +78,21 @@ def execute(
     process_registry = ProcessRegistry(wrap_funcs=[process])
     
     _register_processes_from_module(process_registry, "openeo_processes_dask")
+    _register_processes_from_module(process_registry, "openeo_processes_dask_ml")  # <-- ADDED FOR ML INSTALLATION EMBED2SCALE
     _register_processes_from_module(process_registry, "openeo_argoworkflows_executor.extra_processes")
 
-    sub_graphs = prepare_graphs(parsed_graph)
+    pg_callable = parsed_graph.to_callable(
+        process_registry=process_registry,
+        results_cache={}
+    )
+    pg_callable()
 
-    for graph in sub_graphs:
-        pg_callable = graph.to_callable(
-            process_registry=process_registry,
-            results_cache={}
-        )
-        
-        pg_callable()
+    #sub_graphs = prepare_graphs(parsed_graph)
+
+    #for graph in sub_graphs:
+    #    pg_callable = graph.to_callable(
+    #        process_registry=process_registry,
+    #        results_cache={}
+    #    )
+    #    
+    #    pg_callable()
