@@ -1,23 +1,16 @@
 [tool.poetry]
 name = "openeo-argoworkflows-executor"
 version = "2025.5.1"
-description = ""
-authors = ["sean <sean.hoyal@external.eodc.eu>"]
+description = "dependencies for openeo processes dask + openeo processes dask ml"
+authors = ["Peter Zellner <peter.zellner@dlr.de>"]
 readme = "README.md"
 packages = [{include = "openeo_argoworkflows_executor"}]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.12" # UPDATE from 3.10 to 3.11 because ML-Processes
+python = ">=3.12,<3.13"  #">=3.12" # UPDATE from 3.10 to 3.11 because ML-Processes --> UPDATE to 3.12 for zarr v3
+
+# Core executor dependencies
 dask-gateway = "^2024.1.0"
-#openeo-processes-dask = {version = "2025.5.1", extras = ["implementations", "ml"]} # UPDATE openeo-processes-dask-ml installs its compatible version
-openeo-processes-dask-ml = { git = "https://github.com/Open-EO/openeo-processes-dask-ml.git", tag = "0.0.1", extras = ["torch"] }
-#ml-datacube-bridge = { git = "https://github.com/Open-EO/openeo-processes-dask-ml.git", subdirectory = "ml_datacube_bridge" }
-
-onnx = "^1.16" # UPDATE for openeo-processes-dask-ml, should have been solved via extrax = ["torch"] above
-
-gdal = "3.6.*" # UPDATE for openeo-processes-dask-ml
-
-
 openeo-pg-parser-networkx = ">=2024.4.0"
 pystac-client = ">=0.8.2,<1"
 click = ">=8.1.7"
@@ -26,6 +19,16 @@ odc-stac = ">=0.3.3,<1"
 stactools = "^0.4.8"
 rioxarray = ">=0.15.1,<1"
 netCDF4 = "<=1.6.5"
+
+
+# Necessities fo ML Processes
+#openeo-processes-dask = {version = "2025.5.1", extras = ["implementations", "ml"]} # UPDATE openeo-processes-dask-ml installs its compatible version
+#ml-datacube-bridge = { git = "https://github.com/Open-EO/openeo-processes-dask-ml.git", subdirectory = "ml_datacube_bridge" } # not explicitly needed
+
+openeo-processes-dask-ml = { git = "https://github.com/Open-EO/openeo-processes-dask-ml.git", extras = ["torch"] } # removed tag = "0.0.1" -> wating for "0.0.2"
+onnx = "^1.16" # UPDATE for openeo-processes-dask-ml, should have been solved via extras = ["torch"] above --> but still throws an error that onnx is needed if not installed.
+gdal = "3.12.2" # UPDATE for openeo-processes-dask-ml -> pin to dockerfile version number
+
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2.0"
