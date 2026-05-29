@@ -49,8 +49,12 @@ def load_collection(
     else:
         raise ValueError("Provided spatial extent could not be interpreted.")
 
+    #query_dict["datetime"] = tuple(
+    #    [str(time.root) for time in temporal_extent if time != 'None']
+    #)
+
     query_dict["datetime"] = tuple(
-        [str(time.root) for time in temporal_extent if time != 'None']
+        [time.root.isoformat() for time in temporal_extent if time != "None"]
     )
 
     if "STAC_API_URL" not in os.environ:
@@ -65,10 +69,21 @@ def load_collection(
 
     example_item = result_items[0]
 
+    print("Properties keys:", list(example_item.properties.keys()))
+    print("proj:epsg:", example_item.properties.get("proj:epsg"))
+    print("to_dict proj:epsg:", example_item.to_dict()["properties"].get("proj:epsg"))
+    print("proj:code:", example_item.properties.get("proj:code"))
+    print("to_dict proj:code:", example_item.to_dict()["properties"].get("proj:code"))
+
     if "proj:wkt2" in example_item.properties.keys():
         crs = pyproj.CRS.from_wkt(example_item.properties["proj:wkt2"])
+    elif "proj:code" in example_item.properties.keys():
+        crs = pyproj.CRS.from_user_input(example_item.properties["proj:code"])
     elif "proj:epsg" in example_item.properties.keys():
         crs = pyproj.CRS.from_epsg(example_item.properties["proj:epsg"])
+    else:
+        raise ValueError("Error: No CRS detected in properties.")
+
 
     if raster.RasterExtension.has_extension(example_item):
         for asset in example_item.get_assets().values():
