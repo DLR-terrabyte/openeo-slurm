@@ -64,13 +64,17 @@ def submit_job(access_token, process_graph):
     return slurm_job
 
 
-def get_job_status(job_id):
-    client_id = os.getenv('CLIENT_ID_STATUS')
-    client_secret = os.getenv('CLIENT_SECRET_STATUS')
-    headers = {"Authorization": f"Bearer {get_service_token(client_id, client_secret)}"}
+def get_job_status(job_id, access_token=None):
+    if not access_token:
+      client_id = os.getenv('CLIENT_ID_STATUS')
+      client_secret = os.getenv('CLIENT_SECRET_STATUS')
+      access_token = get_service_token(client_id, client_secret)
+    
+    headers = {"Authorization": f"Bearer {access_token}"}
     response = requests.get(os.getenv('SLURM_REST_API') + "/job/%s" % job_id, headers=headers)
     info = response.json()
-    job_status = info['jobs'][0]['job_state']
+    job_status = info['jobs'][0]['job_state'][0]
+    
     if job_status in ["COMPLETED"]: 
        return Status.finished
     elif job_status in ["FAILED", "SUSPENDED", "PREEMPTED"]: 
