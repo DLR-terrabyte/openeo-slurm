@@ -43,10 +43,10 @@ def get_slurm_payload(process_graph, username):
         "partition": os.getenv('SLURM_PARTITION_DEFAULT'),
         "standard_output": os.getenv('SLURM_JOB_STDOUT'),
         "standard_error": os.getenv('SLURM_JOB_STDERR'),
-        "environment": {
-          "PATH": os.getenv('SLURM_JOB_PATH'),
-          "LD_LIBRARY_PATH": os.getenv('SLURM_JOB_LD_PATH')
-        }
+        "current_working_directory": "/dss/dsstbyfs02/pn49cu/pn49cu-dss-0010/openeo_tb_test/tmp",
+        "environment": [
+          "SLURM_GET_USER_ENV=1"
+        ]
       },
       "script": slurm_content
     }
