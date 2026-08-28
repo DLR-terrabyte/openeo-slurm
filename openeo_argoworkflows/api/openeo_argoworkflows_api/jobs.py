@@ -27,7 +27,7 @@ from openeo_fastapi.client.auth import Authenticator, User
 
 from openeo_argoworkflows_api.auth import ExtendedAuthenticator
 from openeo_argoworkflows_api.psql.models import ArgoJob
-from openeo_argoworkflows_api.tasks import submit_job
+from openeo_argoworkflows_api.tasks import submit_job, cancel_job
 
 
 fs = fsspec.filesystem(protocol="file")
@@ -178,9 +178,20 @@ class ArgoJobsRegister(JobsRegister):
     def delete_job(
         self, job_id: uuid.UUID, user: User = Depends(Authenticator.validate)
     ):
+
+        job = engine.get(get_model=ArgoJob, primary_key=job_id)
+        if not job:
+            raise HTTPException(404, "Job not found.")
+
+        # cancel Slurm Job if queued or running
+        if (job.status == Status.queued) or (job.status == Status.running):
+            cancel_job(job.workflowname, user._access_token)
+
+        # delete job from database
+        engine.delete(delete_model=ArgoJob, primary_key=job.job_id)
         
         return Response(
-            status_code=202,
+            status_code=204,
             content="The resource has been deleted successfully.",
         )
     
@@ -188,6 +199,8 @@ class ArgoJobsRegister(JobsRegister):
         self, job_id: uuid.UUID, user: User = Depends(Authenticator.validate)
     ):
         job = engine.get(get_model=ArgoJob, primary_key=job_id)
+        if not job:
+            raise HTTPException(404, "Job not found.")
 
         if (job.status != Status.queued) and (job.status != Status.running):
             raise HTTPException(
@@ -196,7 +209,7 @@ class ArgoJobsRegister(JobsRegister):
             )
         
         try:
-            pass
+            cancel_job(job.workflowname, user._access_token)
         except NotFound:
             logger.warning(f"Could not stop workflow {job.workflowname} for job {job.job_id}.")
         

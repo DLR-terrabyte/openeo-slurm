@@ -83,3 +83,12 @@ def get_job_status(job_id, access_token=None):
        return Status.running
     else:
        return Status.queued
+
+def cancel_job(job_id, access_token): 
+    client_id = os.getenv('CLIENT_ID')
+    client_secret = os.getenv('CLIENT_SECRET')
+    headers = {"Authorization": f"Bearer {access_token},{get_service_token(client_id, client_secret)}"}
+    response = requests.delete(os.getenv('SLURM_REST_API') + f"/job/{job_id}", headers=headers)
+    slurm_job = response.json()
+    return True
+
