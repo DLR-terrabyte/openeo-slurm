@@ -151,12 +151,12 @@ class ArgoJobsRegister(JobsRegister):
             / user.user_id.__str__()
             / job.job_id.__str__()
         )
-        try:
-            fs.mkdir(job_workspace)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Could not create workspace for the current job."
-            )
+        #try:
+        #    fs.mkdir(job_workspace)
+        #except Exception as e:
+        #    raise HTTPException(
+        #        status_code=500, detail=f"Could not create workspace for the current job."
+        #    )
 
         # Submit job to SLURM
         slurm_job = submit_job(user._access_token, job.process.process_graph)
