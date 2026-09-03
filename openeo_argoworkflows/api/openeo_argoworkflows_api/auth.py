@@ -234,21 +234,17 @@ def get_credentials_oidc() -> Response:
         providers=[
             Provider(
                 id=settings.OIDC_ORGANISATION,
-                title="EGI Check-in",
+                title="terrabyte",
                 issuer=settings.OIDC_URL,
                 scopes=[
                     "openid",
                     "email",
-                    "eduperson_entitlement",
-                    "eduperson_scoped_affiliation",
                 ],
                 default_clients=[
                     DefaultClient(
-                        id="openeo-platform-default-client",
+                        id="de.lrz.terrabyte.processing",
                         redirect_urls=[
-                            "https://editor.openeo.cloud",
-                            "https://editor.openeo.org",
-                            "http://localhost:1410/",
+                            "https://processing.terrabyte.lrz.de",
                         ],
                         grant_types=[
                             GrantType.authorization_code_pkce,
