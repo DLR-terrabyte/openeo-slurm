@@ -26,3 +26,15 @@ class ExtendedAppSettings(AppSettings):
 
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+
+    # Maximum resources that may be requested through the openEO
+    # Processing Parameters extension. These defaults match the current
+    # terrabyte compute-node limits and can be overridden via environment.
+    SLURM_PARTITION_DEFAULT: Optional[str] = None
+    SLURM_CPUS_PER_TASK_DEFAULT: Optional[int] = None
+    SLURM_MEMORY_DEFAULT: Optional[int] = None
+    SLURM_TIME_LIMIT_DEFAULT: Optional[int] = None
+
+    SLURM_CPUS_PER_TASK_MAX: int = 80
+    SLURM_MEMORY_MAX: int = 356
+    SLURM_TIME_LIMIT_MAX: int = 10080

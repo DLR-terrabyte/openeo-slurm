@@ -3,6 +3,7 @@ import jwt
 import json
 import requests
 from datetime import timedelta
+from fastapi import HTTPException
 from openeo_fastapi.api.types import Status
 from typing import Any
 
@@ -29,7 +30,7 @@ def get_service_token(client_id, client_secret):
     return token
 
 
-def get_slurm_payload(process_graph, username):
+def get_slurm_payload(process_graph, username, processing_parameters=None):
     if not os.path.exists('/config/sbatch_template.sh'):
         raise HTTPException(
             status_code=500, detail=f"Could not find sbatch template file."
@@ -37,27 +38,60 @@ def get_slurm_payload(process_graph, username):
     slurm_content = open('/config/sbatch_template.sh').read()
     slurm_content = slurm_content.replace('$PROCESS_GRAPH', process_graph)
     slurm_content = slurm_content.replace('$USER', username)
-    payload = {
-      "job": {
+    processing_parameters = processing_parameters or {}
+
+    partition = (
+        processing_parameters.get("partition")
+        or os.getenv("SLURM_PARTITION_DEFAULT")
+    )
+    cpus_per_task = processing_parameters.get("cpus_per_task")
+    if cpus_per_task is None and os.getenv("SLURM_CPUS_PER_TASK_DEFAULT"):
+        cpus_per_task = int(os.getenv("SLURM_CPUS_PER_TASK_DEFAULT"))
+
+    # openEO exposes memory in GiB, while the SLURM REST job description
+    # expects memory_per_node in MiB.
+    memory_gib = processing_parameters.get("memory")
+    if memory_gib is None and os.getenv("SLURM_MEMORY_DEFAULT"):
+        memory_gib = int(os.getenv("SLURM_MEMORY_DEFAULT"))
+
+    # openEO exposes the time limit in minutes, matching the SLURM REST API.
+    time_limit = processing_parameters.get("time_limit")
+    if time_limit is None and os.getenv("SLURM_TIME_LIMIT_DEFAULT"):
+        time_limit = int(os.getenv("SLURM_TIME_LIMIT_DEFAULT"))
+
+    job = {
         "name": "openeo",
-        "partition": os.getenv('SLURM_PARTITION_DEFAULT'),
         "standard_output": os.getenv('SLURM_JOB_STDOUT'),
         "standard_error": os.getenv('SLURM_JOB_STDERR'),
         "current_working_directory": "/dss/dsstbyfs02/pn49cu/pn49cu-dss-0010/openeo_tb_test/tmp",
         "environment": [
-          "SLURM_GET_USER_ENV=1"
-        ]
-      },
-      "script": slurm_content
+            "SLURM_GET_USER_ENV=1"
+        ],
+    }
+
+    if partition:
+        job["partition"] = partition
+    if cpus_per_task is not None:
+        job["cpus_per_task"] = cpus_per_task
+    if memory_gib is not None:
+        job["memory_per_node"] = memory_gib * 1024
+    if time_limit is not None:
+        job["time_limit"] = {"set": True, "number": time_limit}
+
+    payload = {
+        "job": job,
+        "script": slurm_content,
     }
     return payload
 
 
-def submit_job(access_token, process_graph):
+def submit_job(access_token, process_graph, processing_parameters=None):
     client_id = os.getenv('CLIENT_ID')
     client_secret = os.getenv('CLIENT_SECRET')
     username = jwt.decode(access_token, options={"verify_signature": False})['preferred_username']
-    payload = get_slurm_payload(json.dumps(process_graph), username)
+    payload = get_slurm_payload(
+        json.dumps(process_graph), username, processing_parameters=processing_parameters
+    )
     headers = {"Authorization": f"Bearer {access_token},{get_service_token(client_id, client_secret)}"}
     response = requests.post(os.getenv('SLURM_REST_API') + "/job/submit", json=payload, headers=headers)
     slurm_job = response.json()

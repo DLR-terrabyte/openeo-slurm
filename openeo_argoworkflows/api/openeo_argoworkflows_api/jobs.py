@@ -13,7 +13,7 @@ import jwt
 from fastapi import Depends, Response, HTTPException, responses
 from typing import Optional
 from pathlib import Path
-from pydantic import conint, BaseModel
+from pydantic import conint, BaseModel, Extra, validator
 from pystac import Collection, Link as StacLink
 from sqlalchemy.exc import IntegrityError
 from typing import Union
@@ -26,6 +26,7 @@ from openeo_fastapi.client.jobs import JobsRegister
 from openeo_fastapi.client.auth import Authenticator, User
 
 from openeo_argoworkflows_api.auth import ExtendedAuthenticator
+from openeo_argoworkflows_api.settings import ExtendedAppSettings
 from openeo_argoworkflows_api.psql.models import ArgoJob
 from openeo_argoworkflows_api.tasks import submit_job, cancel_job
 
@@ -33,6 +34,43 @@ from openeo_argoworkflows_api.tasks import submit_job, cancel_job
 fs = fsspec.filesystem(protocol="file")
 
 logger = logging.getLogger(__name__)
+settings = ExtendedAppSettings()
+
+
+class SlurmJobsRequest(JobsRequest):
+    # Additional parameters defined by the openEO Processing Parameters Extension.
+    partition: Optional[str] = None
+    cpus_per_task: Optional[int] = None
+    memory: Optional[int] = None
+    time_limit: Optional[int] = None
+
+    @validator("cpus_per_task")
+    def validate_cpus_per_task(cls, value):
+        if value is not None and not 1 <= value <= settings.SLURM_CPUS_PER_TASK_MAX:
+            raise ValueError(
+                f"cpus_per_task must be between 1 and "
+                f"{settings.SLURM_CPUS_PER_TASK_MAX}."
+            )
+        return value
+
+    @validator("memory")
+    def validate_memory(cls, value):
+        if value is not None and not 1 <= value <= settings.SLURM_MEMORY_MAX:
+            raise ValueError(
+                f"memory must be between 1 and {settings.SLURM_MEMORY_MAX} GiB."
+            )
+        return value
+
+    @validator("time_limit")
+    def validate_time_limit(cls, value):
+        if value is not None and not 1 <= value <= settings.SLURM_TIME_LIMIT_MAX:
+            raise ValueError(
+                f"time_limit must be between 1 and {settings.SLURM_TIME_LIMIT_MAX} minutes."
+            )
+        return value
+
+    class Config:
+        extra = Extra.allow
 
 
 class UserWorkspace(BaseModel):
@@ -81,7 +119,7 @@ class ArgoJobsRegister(JobsRegister):
         super().__init__(settings, links)
 
     def create_job(
-        self, body: JobsRequest, user: User = Depends(Authenticator.validate)
+        self, body: SlurmJobsRequest, user: User = Depends(Authenticator.validate)
     ):
         """Create a new BatchJob.
 
@@ -108,6 +146,16 @@ class ArgoJobsRegister(JobsRegister):
             description=body.description,
             user_id=user.user_id,
             created=datetime.datetime.now(),
+            processing_parameters={
+                key: value
+                for key, value in {
+                    "partition": body.partition,
+                    "cpus_per_task": body.cpus_per_task,
+                    "memory": body.memory,
+                    "time_limit": body.time_limit,
+                }.items()
+                if value is not None
+            } or None,
         )
 
         try:
@@ -159,7 +207,11 @@ class ArgoJobsRegister(JobsRegister):
         #    )
 
         # Submit job to SLURM
-        slurm_job = submit_job(user._access_token, job.process.process_graph)
+        slurm_job = submit_job(
+            user._access_token,
+            job.process.process_graph,
+            processing_parameters=job.processing_parameters or {},
+        )
 
         job.workflowname = slurm_job['job_id']
         job.status = "queued"

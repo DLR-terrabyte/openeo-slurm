@@ -1,21 +1,46 @@
-import fakeredis
+import json
 
-from rq import Worker, SimpleWorker
-from unittest.mock import patch
+from openeo_argoworkflows_api.tasks import get_slurm_payload
 
-from openeo_argoworkflows_api.tasks import queue_to_submit, q
 
-@patch("openeo_argoworkflows_api.tasks.Redis")
-def test_submit_job(mock_redis, redis_conn, a_mock_job):
-    # Patch the Redis connection to use the FakeRedis instance
-    # mock_redis.return_value = redis_conn
+def test_get_slurm_payload_processing_parameters(monkeypatch, tmp_path):
+    template = tmp_path / "sbatch_template.sh"
+    template.write_text("echo $PROCESS_GRAPH $USER")
+    monkeypatch.setattr("openeo_argoworkflows_api.tasks.os.path.exists", lambda path: True)
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: template.open())
 
-    # # Reset the queue to use the patched Redis connection
-    # q.connection = redis_conn
+    monkeypatch.setenv("SLURM_PARTITION_DEFAULT", "default")
+    payload = get_slurm_payload(
+        {"process_graph": {}},
+        "alice",
+        processing_parameters={
+            "partition": "long",
+            "cpus_per_task": 16,
+            "memory": 64,
+            "time_limit": 240,
+        },
+    )
 
-    # # Call the function to submit the job
-    # job = queue_to_submit(a_mock_job)
+    assert payload["job"]["partition"] == "long"
+    assert payload["job"]["cpus_per_task"] == 16
+    assert payload["job"]["memory_per_node"] == 64 * 1024
+    assert payload["job"]["time_limit"] == {"set": True, "number": 240}
 
-    # # Verify that the job has been enqueued correctly
-    # assert job.is_queued
-    assert True
+
+def test_get_slurm_payload_uses_defaults(monkeypatch, tmp_path):
+    template = tmp_path / "sbatch_template.sh"
+    template.write_text("echo")
+    monkeypatch.setattr("openeo_argoworkflows_api.tasks.os.path.exists", lambda path: True)
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: template.open())
+
+    monkeypatch.setenv("SLURM_PARTITION_DEFAULT", "short")
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK_DEFAULT", "4")
+    monkeypatch.setenv("SLURM_MEMORY_DEFAULT", "16")
+    monkeypatch.setenv("SLURM_TIME_LIMIT_DEFAULT", "60")
+
+    payload = get_slurm_payload({}, "alice")
+
+    assert payload["job"]["partition"] == "short"
+    assert payload["job"]["cpus_per_task"] == 4
+    assert payload["job"]["memory_per_node"] == 16 * 1024
+    assert payload["job"]["time_limit"] == {"set": True, "number": 60}
