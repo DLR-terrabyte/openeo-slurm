@@ -39,6 +39,7 @@ settings = ExtendedAppSettings()
 
 class SlurmJobsRequest(JobsRequest):
     # Additional parameters defined by the openEO Processing Parameters Extension.
+    job_options: Optional[dict] = None
     partition: Optional[str] = None
     cpus_per_task: Optional[int] = None
     memory: Optional[int] = None
@@ -137,6 +138,24 @@ class ArgoJobsRegister(JobsRegister):
             auto_name_size = 16
             body.process.id = uuid.uuid4().hex[:auto_name_size].upper()
 
+        # Define job options
+        processing_parameters = {}
+        if body.job_options:
+            # Used for OpenEO Python Client 
+            processing_parameters = body.job_options
+        else:
+            # Used for OpenEO Web Editor
+            processing_parameters = {
+                key: value
+                for key, value in {
+                    "partition": body.partition,
+                    "cpus_per_task": body.cpus_per_task,
+                    "memory": body.memory,
+                    "time_limit": body.time_limit,
+                }.items()
+                if value is not None
+            }
+
         # Create the job
         job = ArgoJob(
             job_id=job_id,
@@ -146,16 +165,7 @@ class ArgoJobsRegister(JobsRegister):
             description=body.description,
             user_id=user.user_id,
             created=datetime.datetime.now(),
-            processing_parameters={
-                key: value
-                for key, value in {
-                    "partition": body.partition,
-                    "cpus_per_task": body.cpus_per_task,
-                    "memory": body.memory,
-                    "time_limit": body.time_limit,
-                }.items()
-                if value is not None
-            } or None,
+            processing_parameters=processing_parameters,
         )
 
         try:
