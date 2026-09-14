@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
 from openeo_fastapi.api.app import OpenEOApi
-from openeo_fastapi.api.types import Billing, Plan, FileFormat, GisDataType
+from openeo_fastapi.api.types import Billing, Plan, FileFormat, GisDataType, Endpoint
 from openeo_fastapi.client.core import OpenEOCore
 from openeo_pg_parser_networkx.process_registry import Process as pgProcess
 from openeo_fastapi.client.auth import Authenticator, AuthToken
@@ -47,7 +47,15 @@ client = OpenEOCore(
         default_plan="a-cloud",
         plans=[Plan(name="user", description="Subscription plan.", paid=True)],
     )
+)# Advertise the Processing Parameters Extension endpoint in GET /.
+client.endpoints.append(
+    Endpoint(
+        path="/processing_parameters",
+        methods=["GET"],
+    )
 )
+
+
 app = FastAPI()
 
 app.router.add_api_route(
@@ -78,6 +86,67 @@ def validate_auth(authorization: str = Header()):
     return user
 
 api.override_authentication(validate_auth)
+
+
+def get_processing_parameters():
+    # Implements the openEO Processing Parameters Extension 0.1.0.
+    # The public units intentionally hide SLURM's low-level representation:
+    # memory is GiB and time_limit is minutes.
+    parameter_specs = [
+        (
+            "partition",
+            "SLURM partition to use for the job. If omitted, the backend default partition is used.",
+            {"type": "string"},
+            settings.SLURM_PARTITION_DEFAULT,
+        ),
+        (
+            "cpus_per_task",
+            "Number of CPUs allocated to each SLURM task.",
+            {"type": "integer", "minimum": 1, "maximum": settings.SLURM_CPUS_PER_TASK_MAX},
+            settings.SLURM_CPUS_PER_TASK_DEFAULT,
+        ),
+        (
+            "memory",
+            "Memory requested for the SLURM job in GiB. The value is applied as memory per node.",
+            {"type": "integer", "minimum": 1, "maximum": settings.SLURM_MEMORY_MAX},
+            settings.SLURM_MEMORY_DEFAULT,
+        ),
+        (
+            "time_limit",
+            "Maximum runtime of the SLURM job in minutes.",
+            {"type": "integer", "minimum": 1, "maximum": settings.SLURM_TIME_LIMIT_MAX},
+            settings.SLURM_TIME_LIMIT_DEFAULT,
+        ),
+    ]
+
+    parameters = []
+    for name, description, schema, default in parameter_specs:
+        parameter = {
+            "name": name,
+            "description": description,
+            "optional": True,
+            "schema": schema,
+        }
+        if default is not None:
+            parameter["default"] = default
+        parameters.append(parameter)
+
+    return {
+        "create_job_parameters": parameters,
+        "create_service_parameters": [],
+        "create_synchronous_parameters": [],
+    }
+
+
+api.app.router.add_api_route(
+    name="processing_parameters",
+    path=f"{client.settings.OPENEO_PREFIX}/processing_parameters",
+    response_model=None,
+    response_model_exclude_unset=False,
+    response_model_exclude_none=True,
+    methods=["GET"],
+    endpoint=get_processing_parameters,
+)
 
 api.app.add_middleware(
     CORSMiddleware,

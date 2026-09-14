@@ -116,3 +116,27 @@ def test_get_wellknown(mock_settings):
 
     resp = app.get(test_path)
     assert resp.status_code == 200
+
+
+def test_processing_parameters():
+    app = TestClient(app_api)
+
+    resp = app.get(f"{client.settings.OPENEO_PREFIX}/processing_parameters")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert "create_job_parameters" in data
+    assert "create_service_parameters" in data
+    assert "create_synchronous_parameters" in data
+
+    params = {p["name"]: p for p in data["create_job_parameters"]}
+    assert set(params) == {
+        "partition",
+        "cpus_per_task",
+        "memory",
+        "time_limit",
+    }
+    assert params["partition"]["schema"] == {"type": "string"}
+    assert params["cpus_per_task"]["schema"] == {"type": "integer", "minimum": 1, "maximum": 80}
+    assert params["memory"]["schema"] == {"type": "integer", "minimum": 1, "maximum": 356}
+    assert params["time_limit"]["schema"] == {"type": "integer", "minimum": 1, "maximum": 10080}
