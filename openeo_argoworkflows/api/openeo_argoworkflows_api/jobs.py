@@ -220,6 +220,7 @@ class ArgoJobsRegister(JobsRegister):
         slurm_job = submit_job(
             user._access_token,
             job.process.process_graph,
+            str(job.job_id),
             processing_parameters=job.processing_parameters or {},
         )
 
@@ -294,50 +295,81 @@ class ArgoJobsRegister(JobsRegister):
 
         if not job.workflowname:
             raise HTTPException(404, "No Job run found for this Job.")
-       
-        try:
-            pass
-        except NotFound as exc:
-            raise HTTPException(404, "Job run not longer available for this Job.")
 
-        resp = requests.get(
-            url=urljoin(
-                self.workflows_service.host, "api/v1/workflows/{namespace}/{name}/log"
-            ).format(name=workflow.metadata.name, namespace=workflow.metadata.namespace),
-            params={
-                "podName": None,
-                "logOptions.container": "main",
-                "logOptions.follow": None,
-                "logOptions.previous": None,
-                "logOptions.sinceSeconds": None,
-                "logOptions.sinceTime.seconds": None,
-                "logOptions.sinceTime.nanos": None,
-                "logOptions.timestamps": None,
-                "logOptions.tailLines": None,
-                "logOptions.limitBytes": None,
-                "logOptions.insecureSkipTLSVerifyBackend": None,
-                "grep": None,
-                "selector": None,
-            },
-            headers={"Authorization": f"{self.workflows_service.token}"},
-            data=None,
-            verify=self.workflows_service.verify_ssl,
+        if not self.settings.S3_ACCESS_KEY or not self.settings.S3_ACCESS_SECRET:
+            logger.error("S3 credentials are not configured.")
+            raise HTTPException(
+                status_code=500,
+                detail="S3 log storage is not configured.",
+            )
+
+        workflowname = str(job.workflowname)
+
+        stdout_key = (
+            f"{self.settings.S3_LOG_PREFIX}/"
+            f"{workflowname}_stdout.logfile"
+        )
+        stderr_key = (
+            f"{self.settings.S3_LOG_PREFIX}/"
+            f"{workflowname}_sterr.logfile"
         )
 
-        logs = []
-        if resp.status_code == 200:
-            raw_logs = resp.content.decode("utf8").split("\n")
-            logs = [
-                json.loads(log)["result"]["content"]
-                for log in raw_logs
-                if log != "" and "content" in json.loads(log)["result"].keys()
-            ]
+        try:
+            s3 = fsspec.filesystem(
+                "s3",
+                key=self.settings.S3_ACCESS_KEY,
+                secret=self.settings.S3_ACCESS_SECRET,
+                client_kwargs={
+                    "endpoint_url": str(self.settings.S3_ENDPOINT),
+                },
+            )
 
-        return JobsGetLogsResponse(
+            logs = []
+
+            for key in (stdout_key, stderr_key):
+                path = f"{self.settings.S3_BUCKET}/{key}"
+
+                try:
+                    with s3.open(path, "rb") as file:
+                        content = file.read().decode(
+                            "utf-8",
+                            errors="replace",
+                        )
+
+                    logs.extend(content.splitlines())
+
+                except FileNotFoundError:
+                    logger.warning(
+                        "Log file not found: s3://%s/%s",
+                        self.settings.S3_BUCKET,
+                        key,
+                    )
+
+            if not logs:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No logs found for this Job.",
+                )
+
+            return JobsGetLogsResponse(
                 logs=logs,
                 links=[],
             ).dict(exclude_none=True)
 
+        except HTTPException:
+            raise
+
+        except Exception as exc:
+            logger.exception(
+                "Could not retrieve logs for job %s from S3.",
+                job_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Could not retrieve logs for this Job.",
+            ) from exc
+
+       
 
     def get_results(
         self, job_id: uuid.UUID, user: User = Depends(ExtendedAuthenticator.signed_url_or_validate)
@@ -356,11 +388,28 @@ class ArgoJobsRegister(JobsRegister):
 
         job = engine.get(get_model=ArgoJob, primary_key=job_id)
 
-        wspace = UserWorkspace(
-            root_dir=self.settings.OPENEO_WORKSPACE_ROOT, user_id=str(user.user_id), job_id=str(job.job_id)
-        )
+        #wspace = UserWorkspace(
+        #    root_dir=self.settings.OPENEO_WORKSPACE_ROOT, user_id=str(user.user_id), job_id=str(job.job_id)
+        #)
 
-        stac_collection = Collection.from_file(str(wspace.results_collection_json))
+        username = jwt.decode(user._access_token, options={"verify_signature": False})['preferred_username']
+        s3 = fsspec.filesystem(
+                "s3",
+                key=self.settings.S3_ACCESS_KEY,
+                secret=self.settings.S3_ACCESS_SECRET,
+                client_kwargs={
+                    "endpoint_url": str(self.settings.S3_ENDPOINT),
+                },
+        )
+        path = f"{self.settings.S3_BUCKET}/results/{username}/{job_id}/output/STAC/{job_id}_collection.json"
+        with s3.open(path, "rb") as file:
+             content = file.read().decode(
+                 "utf-8",
+                 errors="replace",
+             )
+
+        stac = json.loads(content)
+        stac_collection = Collection.from_dict(stac)
 
         new_links = [link for link in stac_collection.links if link.rel != "item"]
 
@@ -375,37 +424,38 @@ class ArgoJobsRegister(JobsRegister):
             link._target_href = API_SELF_URL.__add__(self_url)
 
         # Sign urls
-        now = datetime.datetime.now().replace(microsecond=0)
-        week = datetime.timedelta(days=7)
-        expiry = now + week
+        #now = datetime.datetime.now().replace(microsecond=0)
+        #week = datetime.timedelta(days=7)
+        #expiry = now + week
 
-        canonical_url = API_SELF_URL.__add__(
-            ExtendedAuthenticator.sign_url(
-                url=self_url,
-                key_name="OPENEO_SIGN_KEY",
-                user_id=user.user_id,
-                expiration_time=expiry
-            )
-        )
-        new_links.append(StacLink(rel="canonical", target=canonical_url))
+        #canonical_url = API_SELF_URL.__add__(
+        #    ExtendedAuthenticator.sign_url(
+        #        url=self_url,
+        #        key_name="OPENEO_SIGN_KEY",
+        #        user_id=user.user_id,
+        #        expiration_time=expiry
+        #    )
+        #)
+        #new_links.append(StacLink(rel="canonical", target=canonical_url))
 
         stac_collection.links = new_links
 
         for value in stac_collection.assets.values():
-            file_name = value.href.split("/")[-1]
-            relative_path = "/{job_id}/RESULTS/{file}".format(
-                user_id=user, job_id=job_id, file=file_name
-            )
-            path ="{prefix}/files{path}".format(prefix=self.settings.OPENEO_PREFIX, path=relative_path)
+            value.href = 'file://' + value.href
+            #file_name = value.href.split("/")[-1]
+            #relative_path = "/{job_id}/RESULTS/{file}".format(
+            #    user_id=user, job_id=job_id, file=file_name
+            #)
+            #path ="{prefix}/files{path}".format(prefix=self.settings.OPENEO_PREFIX, path=relative_path)
 
-            value.href = API_SELF_URL.__add__(
-                ExtendedAuthenticator.sign_url(
-                    url=path,
-                    key_name="OPENEO_SIGN_KEY",
-                    user_id=user.user_id,
-                    expiration_time=expiry
-                )
-            )
+            #value.href = API_SELF_URL.__add__(
+            #    ExtendedAuthenticator.sign_url(
+            #        url=path,
+            #        key_name="OPENEO_SIGN_KEY",
+            #        user_id=user.user_id,
+            #        expiration_time=expiry
+            #    )
+            #)
 
         stac_collection.summaries.add(
             "datetime", {
