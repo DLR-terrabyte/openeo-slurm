@@ -30,7 +30,7 @@ def get_service_token(client_id, client_secret):
     return token
 
 
-def get_slurm_payload(process_graph, username, processing_parameters=None):
+def get_slurm_payload(process_graph, username, openeo_job_id, processing_parameters=None):
     if not os.path.exists('/config/sbatch_template.sh'):
         raise HTTPException(
             status_code=500, detail=f"Could not find sbatch template file."
@@ -38,6 +38,7 @@ def get_slurm_payload(process_graph, username, processing_parameters=None):
     slurm_content = open('/config/sbatch_template.sh').read()
     slurm_content = slurm_content.replace('$PROCESS_GRAPH', process_graph)
     slurm_content = slurm_content.replace('$USER', username)
+    slurm_content = slurm_content.replace('$OPENEO_JOB_ID', openeo_job_id)
     processing_parameters = processing_parameters or {}
 
     partition = (
@@ -85,12 +86,12 @@ def get_slurm_payload(process_graph, username, processing_parameters=None):
     return payload
 
 
-def submit_job(access_token, process_graph, processing_parameters=None):
+def submit_job(access_token, process_graph, openeo_job_id, processing_parameters=None):
     client_id = os.getenv('CLIENT_ID')
     client_secret = os.getenv('CLIENT_SECRET')
     username = jwt.decode(access_token, options={"verify_signature": False})['preferred_username']
     payload = get_slurm_payload(
-        json.dumps(process_graph), username, processing_parameters=processing_parameters
+        json.dumps(process_graph), username, openeo_job_id, processing_parameters=processing_parameters
     )
     headers = {"Authorization": f"Bearer {access_token},{get_service_token(client_id, client_secret)}"}
     response = requests.post(os.getenv('SLURM_REST_API') + "/job/submit", json=payload, headers=headers)

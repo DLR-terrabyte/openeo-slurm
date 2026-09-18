@@ -38,3 +38,9 @@ class ExtendedAppSettings(AppSettings):
     SLURM_CPUS_PER_TASK_MAX: int = 80
     SLURM_MEMORY_MAX: int = 356
     SLURM_TIME_LIMIT_MAX: int = 10080
+
+    S3_ENDPOINT: Optional[AnyUrl] 
+    S3_ACCESS_KEY: Optional[str] = None
+    S3_ACCESS_SECRET: Optional[str] = None
+    S3_BUCKET: str
+    S3_LOG_PREFIX: str
