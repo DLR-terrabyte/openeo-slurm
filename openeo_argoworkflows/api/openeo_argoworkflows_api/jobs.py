@@ -335,8 +335,12 @@ class ArgoJobsRegister(JobsRegister):
                             "utf-8",
                             errors="replace",
                         )
-
-                    logs.extend(content.splitlines())
+                    log = {"id": os.path.basename(key), "message": content}
+                    if 'stdout' in key: 
+                        log["level"] = "info"
+                    else:
+                        log["level"] = "error"
+                    logs.append(log)
 
                 except FileNotFoundError:
                     logger.warning(
@@ -372,7 +376,7 @@ class ArgoJobsRegister(JobsRegister):
        
 
     def get_results(
-        self, job_id: uuid.UUID, user: User = Depends(ExtendedAuthenticator.signed_url_or_validate)
+        self, job_id: uuid.UUID, user: User = Depends(Authenticator.validate)
     ):
         """Get the results for the BatchJob.
 
@@ -420,8 +424,8 @@ class ArgoJobsRegister(JobsRegister):
 
         self_url = f"{self.settings.OPENEO_PREFIX}/jobs/{str(job.job_id)}/results"
 
-        for link in new_links:
-            link._target_href = API_SELF_URL.__add__(self_url)
+        #for link in new_links:
+        #    link._target_href = API_SELF_URL.__add__(self_url)
 
         # Sign urls
         #now = datetime.datetime.now().replace(microsecond=0)
@@ -466,7 +470,7 @@ class ArgoJobsRegister(JobsRegister):
 
         stac_collection.extra_fields.update({"openeo:status": "finished"})
 
-        return stac_collection.to_dict()
+        return stac_collection.to_dict(transform_hrefs=False)
     
 
     def process_sync_job(self, body: JobsRequest = JobsRequest(), user: User = Depends(Authenticator.validate)):
